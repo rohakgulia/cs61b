@@ -60,6 +60,15 @@ body{
 .heap-empty{font-size:11px;color:var(--dim);text-align:center;padding:12px;background:var(--bg3);border-radius:4px;border:1px dashed var(--border)}
 .bars{display:flex;align-items:flex-end;gap:3px;height:140px;padding-top:20px}
 .bars--msd{height:auto;min-height:120px;align-items:stretch;padding-top:8px;flex-direction:column}
+.ref-wrap{margin-top:8px;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:4px}
+.ref-title{font-size:10px;color:var(--dim);margin-bottom:6px}
+.ref-bars{display:flex;align-items:flex-end;gap:3px;height:66px;padding-top:14px}
+.aux-wrap{margin-top:10px;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:4px}
+.aux-title{font-size:10px;color:var(--dim);margin-bottom:6px}
+.aux-grid{display:flex;gap:4px;flex-wrap:wrap}
+.aux-cell{min-width:30px;padding:4px 5px;border:1px solid var(--border);border-radius:3px;text-align:center;background:var(--c-default)}
+.aux-idx{font-size:9px;color:var(--dim);line-height:1}
+.aux-val{font-size:11px;color:var(--bright);line-height:1.2}
 .msd-wrap{display:flex;flex-direction:column;gap:10px;width:100%}
 .msd-row{display:flex;align-items:center;gap:12px}
 .msd-idx{width:22px;text-align:right;font-size:10px;color:var(--dim);flex-shrink:0}
@@ -295,22 +304,50 @@ function genQuick(init){
 // ── Counting Sort ───────────────────────────────────────
 function genCounting(init){
   const a=[...init],n=a.length,S=[]
-  const R=Math.max(...a)+1
-  S.push(s(a,{},`Counting sort: keys in [0..${R-1}], R=${R}`))
+  const maxKey=Math.max(...a), R=maxKey+1
+  S.push(s(a,{},`Counting sort first scans for max key=${maxKey}. Then it allocates counts with length R=max+1=${R}, so every possible key index 0..${maxKey} has a slot.`,{
+    auxArray:new Array(R).fill(0),
+    auxLabel:`counts size = max key (${maxKey}) + 1 = ${R}`
+  }))
   const counts=new Array(R).fill(0)
   for(let i=0;i<n;i++){
     counts[a[i]]++
-    S.push(s(a,{[i]:'bucket'},`a[${i}]=${a[i]}: counts[${a[i]}]++ → ${counts[a[i]]}`))
+    S.push(s(a,{[i]:'bucket'},`a[${i}]=${a[i]}: counts[${a[i]}]++ → ${counts[a[i]]}`,{
+      auxArray:[...counts],
+      auxLabel:`counts size = ${R} (indices 0..${R-1})`
+    }))
   }
-  S.push(s(a,{},`counts = [${counts.join(', ')}]`))
+  S.push(s(a,{},`Frequency array complete: counts = [${counts.join(', ')}]`,{
+    auxArray:[...counts],
+    auxLabel:`counts size = ${R} (indices 0..${R-1})`
+  }))
   const start=[0]
   for(let r=0;r<R-1;r++) start.push(start[r]+counts[r])
-  S.push(s(a,{},`start positions: {${start.map((v,i)=>`${i}→${v}`).join(', ')}}`))
-  const out=new Array(n),next=[...start]
+  S.push(s(a,{},`start positions: {${start.map((v,i)=>`${i}→${v}`).join(', ')}}`,{
+    auxArray:[...counts],
+    auxLabel:`counts (used to compute starts)`
+  }))
+  const out=new Array(n),outView=new Array(n).fill(null),next=[...start]
   for(let i=0;i<n;i++){
     const k=a[i]
-    S.push(s(a,{[i]:'active'},`Place ${a[i]} (key ${k}) → out[${next[k]}]`))
-    out[next[k]++]=a[i]
+    const dest=next[k]
+    S.push(s(outView,{[dest]:'active'},`Place ${a[i]} (key ${k}) → out[${dest}]`,{
+      auxArray:[...counts],
+      auxLabel:`counts stay fixed during placement`,
+      refArray:[...a],
+      refLabel:'Input array (reference)',
+      refHl:{[i]:'active'}
+    }))
+    out[dest]=a[i]
+    outView[dest]=a[i]
+    next[k]++
+    S.push(s(outView,{[dest]:'swap'},`Wrote ${a[i]} at out[${dest}]`,{
+      auxArray:[...counts],
+      auxLabel:`counts stay fixed during placement`,
+      refArray:[...a],
+      refLabel:'Input array (reference)',
+      refHl:{[i]:'active'}
+    }))
   }
   const hm={}; for(let i=0;i<n;i++) hm[i]='active'
   S.push(s(out,hm,'Output array assembled from counts'))
@@ -573,6 +610,8 @@ function buildContent(){
     <div class="viz">
       ${curKey==='heap'?'<div class="heap-viz" id="heapViz"></div>':''}
       <div class="bars${curKey==='msd'?' bars--msd':''}" id="bars"></div>
+      <div id="ref"></div>
+      <div id="aux"></div>
       <div class="prog-track"><div class="prog-bar" id="prog" style="width:0"></div></div>
       <div class="step-info">
         <div class="step-msg" id="msg">Press Play or Step →</div>
@@ -609,6 +648,8 @@ function genSteps(){
 
 function renderStep(){
   const bEl=document.getElementById('bars')
+  const rEl=document.getElementById('ref')
+  const aEl=document.getElementById('aux')
   const mEl=document.getElementById('msg')
   const nEl=document.getElementById('num')
   const pEl=document.getElementById('prog')
@@ -624,16 +665,60 @@ function renderStep(){
     bEl.className='bars bars--msd'
     const dep=st.msdDepth
     bEl.innerHTML=renderMsdStrings(array, hl, dep)
+    if(rEl) rEl.innerHTML=''
+    if(aEl) aEl.innerHTML=''
   } else {
     bEl.className='bars'
-    const maxV=Math.max(...array)
+    const nums=array.filter(v=>typeof v==='number')
+    const maxV=nums.length?Math.max(...nums):1
     bEl.innerHTML=array.map((v,i)=>{
       const col=COLORS[hl[i]||'default']||COLORS.default
-      const pct=(v/maxV)*100
+      const isNum=typeof v==='number'
+      const pct=isNum?(v/maxV)*100:8
       return `<div class="bar" style="height:${pct}%;background:${col}">
-        ${array.length<=14?`<div class="bval">${v}</div>`:''}
+        ${array.length<=14?`<div class="bval">${isNum?v:'·'}</div>`:''}
       </div>`
     }).join('')
+    if(rEl){
+      if(st.refArray){
+        const refArray=st.refArray
+        const refHl=st.refHl||{}
+        const refNums=refArray.filter(v=>typeof v==='number')
+        const refMaxV=refNums.length?Math.max(...refNums):1
+        rEl.innerHTML=`
+          <div class="ref-wrap">
+            <div class="ref-title">${st.refLabel||'Input array'}</div>
+            <div class="ref-bars">${refArray.map((v,i)=>{
+              const col=COLORS[refHl[i]||'default']||COLORS.default
+              const pct=(v/refMaxV)*100
+              return `<div class="bar" style="height:${pct}%;background:${col}">
+                ${refArray.length<=14?`<div class="bval">${v}</div>`:''}
+              </div>`
+            }).join('')}</div>
+          </div>
+        `
+      } else {
+        rEl.innerHTML=''
+      }
+    }
+    if(aEl){
+      if(st.auxArray){
+        const label=st.auxLabel||'Auxiliary array'
+        aEl.innerHTML=`
+          <div class="aux-wrap">
+            <div class="aux-title">${label}</div>
+            <div class="aux-grid">${st.auxArray.map((v,i)=>`
+              <div class="aux-cell">
+                <div class="aux-idx">[${i}]</div>
+                <div class="aux-val">${v}</div>
+              </div>
+            `).join('')}</div>
+          </div>
+        `
+      } else {
+        aEl.innerHTML=''
+      }
+    }
   }
   if(mEl) mEl.textContent=msg
   if(nEl) nEl.textContent=`${Math.min(idx+1,steps.length)} / ${steps.length}`
