@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CS 61B – Sorting Algorithms</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0b0f18;--bg2:#111827;--bg3:#1c2535;--border:#273040;
+  --text:#bdd0e8;--dim:#5e7a96;--bright:#e0eeff;
+  --c-default:#182d4a;--c-scan:#1e4a7a;--c-compare:#b06820;
+  --c-swap:#b02828;--c-sorted:#1a8040;--c-pivot:#6030b8;
+  --c-active:#1858b0;--c-bucket:#a07818;
+  --accent:#3a7fd4;
+}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:'JetBrains Mono','Fira Code','Cascadia Code','Consolas',monospace;
+  font-size:13px;min-height:100vh;
+}
+/* Header */
+.hdr{
+  background:var(--bg2);border-bottom:1px solid var(--border);
+  padding:10px 16px 0;position:sticky;top:0;z-index:10;
+}
+.site-title{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
+.tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{
+  padding:5px 13px 7px;font:inherit;font-size:12px;
+  border:1px solid transparent;border-bottom:none;border-radius:4px 4px 0 0;
+  background:transparent;color:var(--dim);cursor:pointer;white-space:nowrap;
+  position:relative;top:1px;transition:color .1s,background .1s;user-select:none
+}
+.tab:hover{color:var(--text);background:var(--bg3)}
+.tab.active{color:var(--bright);background:var(--bg);border-color:var(--border);border-bottom-color:var(--bg)}
+/* Main */
+.main{max-width:800px;margin:0 auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+/* Badges */
+.badges{display:flex;gap:6px;flex-wrap:wrap}
+.badge{display:inline-flex;padding:2px 9px;border-radius:3px;font-size:11px;border:1px solid;white-space:nowrap}
+.badge-t{border-color:#3a7fd444;background:#3a7fd410;color:#5a9ff4}
+.badge-s{border-color:#1a804044;background:#1a804010;color:#40c070}
+.badge-stb{border-color:#6030b844;background:#6030b810;color:#a060f0}
+.badge-uns{border-color:#b0282844;background:#b0282810;color:#f06060}
+/* Description */
+.desc{
+  font-size:11.5px;color:var(--dim);line-height:1.55;
+  padding:8px 12px;background:var(--bg2);border:1px solid var(--border);
+  border-left:3px solid var(--accent);border-radius:0 4px 4px 0
+}
+/* Viz */
+.viz{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:14px 14px 10px}
+.bars{display:flex;align-items:flex-end;gap:3px;height:140px;padding-top:20px}
+.bar{flex:1;min-width:6px;border-radius:2px 2px 0 0;position:relative;transition:height .12s ease,background-color .08s ease}
+.bval{position:absolute;top:-15px;left:50%;transform:translateX(-50%);font-size:9px;color:#3a5070;white-space:nowrap;pointer-events:none}
+.prog-track{height:2px;background:var(--bg3);margin-top:10px;border-radius:1px}
+.prog-bar{height:2px;background:var(--accent);border-radius:1px;transition:width .1s}
+.step-info{margin-top:7px;display:flex;align-items:baseline;gap:10px}
+.step-msg{font-size:11px;color:var(--dim);flex:1;min-height:15px}
+.step-num{font-size:10px;color:#2d4060;white-space:nowrap;flex-shrink:0}
+/* Legend */
+.legend{margin-top:9px;display:flex;flex-wrap:wrap;gap:5px 14px}
+.lgnd-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--dim)}
+.lgnd-dot{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+/* Controls */
+.controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.btn{
+  padding:5px 13px;font:inherit;font-size:11px;
+  border:1px solid var(--border);border-radius:3px;
+  background:var(--bg3);color:var(--text);cursor:pointer;
+  transition:border-color .1s,color .1s;user-select:none
+}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn:active{opacity:.8}
+.btn.play{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.play:hover{opacity:.85;color:#fff}
+.spd-wrap{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:10px;color:var(--dim)}
+input[type=range]{accent-color:var(--accent);width:70px;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="site-title">CS 61B // Sorting Algorithms</div>
+  <div class="tabs" id="tabs"></div>
+</div>
+<div class="main" id="main"></div>
+
+<script>
+/* ══════════════════════════════════════════════════════════
+   STEP FORMAT: { array: [...], hl: { idx: state }, msg: '' }
+   States: default | scan | compare | swap | sorted | pivot | active | bucket
+══════════════════════════════════════════════════════════ */
+function s(arr, hl, msg){ return { array:[...arr], hl:{...hl}, msg } }
+function baseHL(sortedSet){ const h={}; sortedSet.forEach(k=>{ h[k]='sorted' }); return h }
+
+// ── Selection Sort ──────────────────────────────────────
+function genSelection(init){
+  const a=[...init],n=a.length,S=[],sorted=new Set()
+  for(let i=0;i<n-1;i++){
+    let mi=i
+    for(let j=i+1;j<n;j++){
+      const h=baseHL(sorted); h[i]='active'; h[mi]='compare'; h[j]='scan'
+      S.push(s(a,h,`Find min from [${i}]: ${a[j]} vs current min ${a[mi]}`))
+      if(a[j]<a[mi]) mi=j
+    }
+    if(mi!==i){
+      const h=baseHL(sorted); h[i]='swap'; h[mi]='swap'
+      S.push(s(a,h,`Swap ${a[i]} ↔ ${a[mi]}`))
+      ;[a[i],a[mi]]=[a[mi],a[i]]
+    }
+    sorted.add(i)
+    S.push(s(a,baseHL(sorted),`${a[i]} is in its final position [${i}]`))
+  }
+  sorted.add(n-1)
+  S.push(s(a,baseHL(sorted),'Array sorted ✓'))
+  return S
+}
+
+// ── Insertion Sort ──────────────────────────────────────
+function genInsertion(init){
+  const a=[...init],n=a.length,S=[]
+  S.push(s(a,{0:'sorted'},'Single element is trivially sorted'))
+  for(let i=1;i<n;i++){
+    let j=i
+    const h={}; for(let k=0;k<i;k++) h[k]='sorted'; h[i]='active'
+    S.push(s(a,h,`Inserting ${a[i]} into sorted prefix [0..${i-1}]`))
+    while(j>0 && a[j-1]>a[j]){
+      S.push(s(a,{[j]:'compare',[j-1]:'compare'},`${a[j-1]} > ${a[j]}: swap left`))
+      ;[a[j],a[j-1]]=[a[j-1],a[j]]
+      S.push(s(a,{[j]:'swap',[j-1]:'swap'},`Swapped → ${a[j-1]} now at [${j-1}]`))
+      j--
+    }
+    const h2={}; for(let k=0;k<=i;k++) h2[k]='sorted'
+    S.push(s(a,h2,`${a[j]} settled at [${j}]`))
+  }
+  const hf={}; for(let i=0;i<n;i++) hf[i]='sorted'
+  S.push(s(a,hf,'Array sorted ✓'))
+  return S
+}
+
+// ── Merge Sort ──────────────────────────────────────────
+function genMerge(init){
+  const a=[...init],n=a.length,S=[]
+  function ms(l,r){
+    if(l>=r){ S.push(s(a,{[l]:'sorted'},`Base case [${l}]`)); return }
+    const mid=(l+r)>>1
+    const h={}; for(let i=l;i<=r;i++) h[i]='active'
+    S.push(s(a,h,`Split [${l}..${r}] → [${l}..${mid}] | [${mid+1}..${r}]`))
+    ms(l,mid); ms(mid+1,r); merge(l,mid,r)
+  }
+  function merge(l,m,r){
+    const L=a.slice(l,m+1),R=a.slice(m+1,r+1)
+    let i=0,j=0,k=l
+    while(i<L.length && j<R.length){
+      const h={}; for(let x=k;x<=r;x++) h[x]='active'
+      S.push(s(a,h,`Merge [${l}..${r}]: comparing ${L[i]} vs ${R[j]}`))
+      if(L[i]<=R[j]) a[k++]=L[i++]; else a[k++]=R[j++]
+    }
+    while(i<L.length) a[k++]=L[i++]
+    while(j<R.length) a[k++]=R[j++]
+    const hf={}; for(let x=l;x<=r;x++) hf[x]='sorted'
+    S.push(s(a,hf,`Merged [${l}..${r}]`))
+  }
+  ms(0,n-1)
+  const hf={}; for(let i=0;i<n;i++) hf[i]='sorted'
+  S.push(s(a,hf,'Array sorted ✓'))
+  return S
+}
+
+// ── Heap Sort ───────────────────────────────────────────
+function genHeap(init){
+  const a=[...init],n=a.length,S=[]
+  function sink(k,sz){
+    while(2*k+1<sz){
+      let c=2*k+1
+      if(c+1<sz && a[c+1]>a[c]) c++
+      if(a[k]>=a[c]) break
+      S.push(s(a,{[k]:'compare',[c]:'compare'},`Sink: ${a[k]} < child ${a[c]}, swap down`))
+      ;[a[k],a[c]]=[a[c],a[k]]
+      S.push(s(a,{[k]:'swap',[c]:'swap'},`Sank → ${a[c]} now at [${c}]`))
+      k=c
+    }
+  }
+  S.push(s(a,{},'Phase 1: bottom-up heapify (sink in reverse level order)'))
+  for(let k=Math.floor(n/2)-1;k>=0;k--){
+    S.push(s(a,{[k]:'active'},`Sink node [${k}] = ${a[k]}`))
+    sink(k,n)
+  }
+  const ph={}; for(let i=0;i<n;i++) ph[i]='pivot'
+  S.push(s(a,ph,`Max-heap built. Root ${a[0]} is the maximum.`))
+  S.push(s(a,{},'Phase 2: extract-max to sorted suffix'))
+  const sorted=new Set()
+  for(let end=n-1;end>0;end--){
+    const h=baseHL(sorted); h[0]='active'; h[end]='swap'
+    S.push(s(a,h,`Swap root ${a[0]} ↔ last heap item ${a[end]}`))
+    ;[a[0],a[end]]=[a[end],a[0]]
+    sorted.add(end)
+    S.push(s(a,baseHL(sorted),`${a[end]} placed at final position [${end}]`))
+    sink(0,end)
+  }
+  sorted.add(0)
+  S.push(s(a,baseHL(sorted),'Array sorted ✓'))
+  return S
+}
+
+// ── Quick Sort ──────────────────────────────────────────
+function genQuick(init){
+  const a=[...init],n=a.length,S=[],sorted=new Set()
+  function qs(lo,hi){
+    if(lo>=hi){ if(lo===hi) sorted.add(lo); return }
+    const pivIdx=(lo+hi)>>1,piv=a[pivIdx]
+    ;[a[lo],a[pivIdx]]=[a[pivIdx],a[lo]]
+    const h0=baseHL(sorted)
+    for(let x=lo;x<=hi;x++) if(!sorted.has(x)) h0[x]='active'
+    h0[lo]='pivot'
+    S.push(s(a,h0,`Partition [${lo}..${hi}], pivot=${piv} moved to [${lo}]`))
+    let l=lo+1,r=hi
+    while(l<=r){
+      while(l<=r && a[l]<piv){
+        const h=baseHL(sorted); h[lo]='pivot'; h[l]='scan'
+        S.push(s(a,h,`${a[l]} < pivot ${piv}: l moves right`))
+        l++
+      }
+      while(l<=r && a[r]>piv){
+        const h=baseHL(sorted); h[lo]='pivot'; h[r]='scan'
+        S.push(s(a,h,`${a[r]} > pivot ${piv}: r moves left`))
+        r--
+      }
+      if(l<r){
+        const h=baseHL(sorted); h[lo]='pivot'; h[l]='swap'; h[r]='swap'
+        S.push(s(a,h,`Both pointers stopped: swap ${a[l]} ↔ ${a[r]}`))
+        ;[a[l],a[r]]=[a[r],a[l]]; l++; r--
+      } else if(l===r) l++
+    }
+    const h=baseHL(sorted); h[lo]='swap'; h[r]='swap'
+    S.push(s(a,h,`Pointers crossed: place pivot ${piv} at [${r}]`))
+    ;[a[lo],a[r]]=[a[r],a[lo]]
+    sorted.add(r)
+    S.push(s(a,baseHL(sorted),`Pivot ${piv} is in final position [${r}]`))
+    qs(lo,r-1); qs(r+1,hi)
+  }
+  qs(0,n-1)
+  const hf={}; for(let i=0;i<n;i++) hf[i]='sorted'
+  S.push(s(a,hf,'Array sorted ✓'))
+  return S
+}
+
+// ── Counting Sort ───────────────────────────────────────
+function genCounting(init){
+  const a=[...init],n=a.length,S=[]
+  const R=Math.max(...a)+1
+  S.push(s(a,{},`Counting sort: keys in [0..${R-1}], R=${R}`))
+  const counts=new Array(R).fill(0)
+  for(let i=0;i<n;i++){
+    counts[a[i]]++
+    S.push(s(a,{[i]:'bucket'},`a[${i}]=${a[i]}: counts[${a[i]}]++ → ${counts[a[i]]}`))
+  }
+  S.push(s(a,{},`counts = [${counts.join(', ')}]`))
+  const start=[0]
+  for(let r=0;r<R-1;r++) start.push(start[r]+counts[r])
+  S.push(s(a,{},`start positions: {${start.map((v,i)=>`${i}→${v}`).join(', ')}}`))
+  const out=new Array(n),next=[...start]
+  for(let i=0;i<n;i++){
+    const k=a[i]
+    S.push(s(a,{[i]:'active'},`Place ${a[i]} (key ${k}) → out[${next[k]}]`))
+    out[next[k]++]=a[i]
+  }
+  const hm={}; for(let i=0;i<n;i++) hm[i]='active'
+  S.push(s(out,hm,'Output array assembled from counts'))
+  const hf={}; for(let i=0;i<n;i++) hf[i]='sorted'
+  S.push(s(out,hf,'Sorted ✓  Θ(N+R) time & space'))
+  return S
+}
+
+// ── LSD Radix Sort ──────────────────────────────────────
+function genLSD(init){
+  const a=[...init],n=a.length,S=[]
+  const W=2
+  S.push(s(a,{},`LSD Radix Sort: W=${W} passes (least → most significant digit)`))
+  for(let d=0;d<W;d++){
+    const place=Math.pow(10,d),label=d===0?'ones':'tens'
+    S.push(s(a,{},`── Pass ${d+1}/${W}: stable sort by ${label}-digit ──`))
+    const counts=new Array(10).fill(0)
+    for(let i=0;i<n;i++){
+      const dig=Math.floor(a[i]/place)%10; counts[dig]++
+      S.push(s(a,{[i]:'bucket'},`a[${i}]=${a[i]}, ${label}-digit=${dig}: count[${dig}]=${counts[dig]}`))
+    }
+    const next=[0]; for(let r=0;r<9;r++) next.push(next[r]+counts[r])
+    const out=new Array(n)
+    for(let i=0;i<n;i++){
+      const dig=Math.floor(a[i]/place)%10
+      S.push(s(a,{[i]:'active'},`Placing ${a[i]} (${label}-digit=${dig}) → out[${next[dig]}]`))
+      out[next[dig]++]=a[i]
+    }
+    for(let i=0;i<n;i++) a[i]=out[i]
+    const h={}; for(let i=0;i<n;i++) h[i]='active'
+    S.push(s(a,h,`After pass ${d+1}: sorted by ${label}s digit`))
+  }
+  const hf={}; for(let i=0;i<n;i++) hf[i]='sorted'
+  S.push(s(a,hf,'Sorted ✓  Stability preserved relative order across all passes.'))
+  return S
+}
+
+/* ══════════════════════════════════════════════════════════
+   ALGORITHM REGISTRY
+══════════════════════════════════════════════════════════ */
+const ALGOS = {
+  selection:{
+    name:'Selection',time:'Θ(N²)',space:'Θ(1)',stable:false,
+    desc:'Find the minimum element, swap it to the front. Repeat for the remaining N−1 items. Always Θ(N²) — no early termination even if already sorted.',
+    arr:()=>[9,3,7,1,11,5,8,2,10,4,6,12],gen:genSelection
+  },
+  insertion:{
+    name:'Insertion',time:'Θ(N²) worst · Θ(N) best',space:'Θ(1)',stable:true,
+    desc:'Walk each element left until it\'s in the right spot. Every swap eliminates one inversion. Θ(N) if nearly sorted. Fastest for small arrays (<15 items) — used as quicksort\'s base case.',
+    arr:()=>[9,3,7,1,11,5,8,2,10,4,6,12],gen:genInsertion
+  },
+  merge:{
+    name:'Merge',time:'Θ(N log N)',space:'Θ(N)',stable:true,
+    desc:'Recursively split into halves, mergesort each, then merge in Θ(N). Θ(log N) levels × Θ(N) merge work = Θ(N log N) guaranteed. Costs Θ(N) auxiliary space for the merge step.',
+    arr:()=>[9,3,7,1,11,5,8,2,10,4,6,12],gen:genMerge
+  },
+  heap:{
+    name:'Heap',time:'Θ(N log N)',space:'Θ(1)',stable:false,
+    desc:'Phase 1: bottom-up heapify builds a max-heap in Θ(N) by sinking in reverse level order. Phase 2: swap root with last element, shrink heap, sink N times. Θ(1) space but poor cache performance.',
+    arr:()=>[9,3,7,1,11,5,8,2,10,4,6,12],gen:genHeap
+  },
+  quick:{
+    name:'Quicksort',time:'Θ(N log N) avg · Θ(N²) worst',space:'Θ(log N)',stable:false,
+    desc:'Hoare partitioning: two pointers walk inward, swapping elements on the wrong side of the pivot. Fastest in practice. Worst case Θ(N²) on sorted input — avoid with random pivot selection.',
+    arr:()=>[9,3,7,1,11,5,8,2,10,4,6,12],gen:genQuick
+  },
+  counting:{
+    name:'Counting',time:'Θ(N + R)',space:'Θ(N + R)',stable:true,
+    desc:'Count occurrences of each key, compute start positions, scatter to output. Non-comparison sort — breaks the Θ(N log N) lower bound. Keys must be integers in a finite range [0, R).',
+    arr:()=>[3,1,4,1,5,9,2,6,5,3,5],gen:genCounting
+  },
+  lsd:{
+    name:'LSD Radix',time:'Θ(WN + WR)',space:'Θ(N + R)',stable:true,
+    desc:'Sort digit-by-digit from least to most significant using a stable counting sort on each pass. W passes × Θ(N+R) per pass. Stability is essential: each pass must preserve the prior digit order.',
+    arr:()=>[53,17,84,32,61,45,28,76,12,95,39,50],gen:genLSD
+  }
+}
+
+const COLORS = {
+  default:'#1a3050',scan:'#1e5080',compare:'#b06820',swap:'#b02828',
+  sorted:'#1a8040',pivot:'#6030b8',active:'#1858b0',bucket:'#a07818'
+}
+const LEGEND = [
+  {state:'default',label:'Default'},{state:'active',label:'Region'},
+  {state:'compare',label:'Comparing'},{state:'swap',label:'Swapping'},
+  {state:'sorted',label:'Sorted'},{state:'pivot',label:'Pivot/Heap'},
+  {state:'bucket',label:'Bucket/Digit'}
+]
+
+/* ══════════════════════════════════════════════════════════
+   STATE
+══════════════════════════════════════════════════════════ */
+let curKey='selection',steps=[],idx=0,playing=false,timer=null
+const SPEEDS=[1200,850,600,400,270,160,90,50,25]
+const SLABELS=['slowest','slow','','medium','','fast','','','fastest']
+
+/* ══════════════════════════════════════════════════════════
+   RENDER
+══════════════════════════════════════════════════════════ */
+function init(){
+  const tabsEl=document.getElementById('tabs')
+  tabsEl.innerHTML=Object.keys(ALGOS).map(k=>
+    `<button class="tab${k===curKey?' active':''}" onclick="switchAlgo('${k}')">${ALGOS[k].name}</button>`
+  ).join('')
+  buildContent()
+}
+
+function buildContent(){
+  const al=ALGOS[curKey]
+  document.getElementById('main').innerHTML=`
+    <div class="badges">
+      <span class="badge badge-t">⏱ ${al.time}</span>
+      <span class="badge badge-s">▣ space: ${al.space}</span>
+      <span class="badge ${al.stable?'badge-stb':'badge-uns'}">${al.stable?'✓ stable':'✗ unstable'}</span>
+    </div>
+    <div class="desc">${al.desc}</div>
+    <div class="viz">
+      <div class="bars" id="bars"></div>
+      <div class="prog-track"><div class="prog-bar" id="prog" style="width:0"></div></div>
+      <div class="step-info">
+        <div class="step-msg" id="msg">Press Play or Step →</div>
+        <div class="step-num" id="num"></div>
+      </div>
+      <div class="legend">${LEGEND.map(l=>`
+        <div class="lgnd-item">
+          <div class="lgnd-dot" style="background:${COLORS[l.state]}"></div>
+          <span>${l.label}</span>
+        </div>`).join('')}
+      </div>
+    </div>
+    <div class="controls">
+      <button class="btn" onclick="doReset()">↺ Reset</button>
+      <button class="btn" onclick="doBack()">‹ Back</button>
+      <button class="btn play" id="playbtn" onclick="togglePlay()">▶ Play</button>
+      <button class="btn" onclick="doNext()">Next ›</button>
+      <div class="spd-wrap">
+        <span>Speed</span>
+        <input type="range" id="spd" min="1" max="9" value="4" oninput="onSpeed()">
+        <span id="splab">medium</span>
+      </div>
+    </div>
+  `
+  genSteps()
+}
+
+function genSteps(){
+  stopPlay()
+  const al=ALGOS[curKey]
+  steps=al.gen(al.arr())
+  idx=0; renderStep()
+}
+
+function renderStep(){
+  const bEl=document.getElementById('bars')
+  const mEl=document.getElementById('msg')
+  const nEl=document.getElementById('num')
+  const pEl=document.getElementById('prog')
+  if(!bEl) return
+  const st=steps[Math.min(idx,steps.length-1)]
+  const {array,hl,msg}=st
+  const maxV=Math.max(...array)
+  bEl.innerHTML=array.map((v,i)=>{
+    const col=COLORS[hl[i]||'default']||COLORS.default
+    const pct=(v/maxV)*100
+    return `<div class="bar" style="height:${pct}%;background:${col}">
+      ${array.length<=14?`<div class="bval">${v}</div>`:''}
+    </div>`
+  }).join('')
+  if(mEl) mEl.textContent=msg
+  if(nEl) nEl.textContent=`${Math.min(idx+1,steps.length)} / ${steps.length}`
+  if(pEl) pEl.style.width=`${((idx+1)/steps.length)*100}%`
+}
+
+function doReset(){ genSteps() }
+function doNext(){ if(idx<steps.length-1){ idx++; renderStep() } }
+function doBack(){ if(idx>0){ idx--; renderStep() } }
+
+function togglePlay(){ playing?stopPlay():startPlay() }
+
+function startPlay(){
+  if(idx>=steps.length-1) idx=0
+  playing=true
+  const btn=document.getElementById('playbtn')
+  if(btn){ btn.textContent='⏸ Pause' }
+  const delay=getDelay()
+  timer=setInterval(()=>{ if(idx>=steps.length-1){ stopPlay(); return } idx++; renderStep() },delay)
+}
+
+function stopPlay(){
+  playing=false; clearInterval(timer)
+  const btn=document.getElementById('playbtn')
+  if(btn){ btn.textContent='▶ Play' }
+}
+
+function getDelay(){
+  const el=document.getElementById('spd')
+  return el?SPEEDS[parseInt(el.value)-1]:400
+}
+
+function onSpeed(){
+  const el=document.getElementById('spd')
+  const lb=document.getElementById('splab')
+  if(el && lb){ const v=parseInt(el.value)-1; lb.textContent=SLABELS[v]||'' }
+  if(playing){ stopPlay(); startPlay() }
+}
+
+function switchAlgo(key){
+  stopPlay(); curKey=key
+  document.querySelectorAll('.tab').forEach(t=>{
+    t.classList.toggle('active',(t.getAttribute('onclick')||'').includes(`'${key}'`))
+  })
+  buildContent()
+}
+
+init()
+</script>
+</body>
+</html>
