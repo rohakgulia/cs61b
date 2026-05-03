@@ -490,7 +490,7 @@ const ALGOS = {
     arr:()=>[53,17,84,32,61,45,28,76,12,95,39,50],gen:genLSD
   },
   msd:{
-    name:'MSD Radix',time:'Θ(N · L)',space:'Θ(N + R)',stable:true,
+    name:'MSD Radix',time:'Θ(N+R) (best) · Θ(WN+WR) (worst)',space:'Θ(N+WR)',stable:true,
     desc:'Most-significant-character first: partition into buckets by the current column, recurse within each bucket. Each subproblem is independent — sort every "a…" word against other "a…" words before comparing across "b…". Sweeps the opposite direction from LSD (top-down instead of bottom-up by digit).',
     arr:()=>['axis','barn','ably','acid','bark','able'],gen:genMSD
   }
