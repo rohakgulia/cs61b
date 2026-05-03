@@ -53,7 +53,19 @@ body{
 }
 /* Viz */
 .viz{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:14px 14px 10px}
+.heap-viz{margin-bottom:12px;overflow-x:auto}
+.heap-wrap{display:flex;flex-direction:column;align-items:center;gap:6px}
+.heap-svg{display:block;width:100%;max-width:100%;height:auto;min-height:120px;max-height:240px}
+.heap-caption{font-size:10px;color:var(--dim);text-align:center}
+.heap-empty{font-size:11px;color:var(--dim);text-align:center;padding:12px;background:var(--bg3);border-radius:4px;border:1px dashed var(--border)}
 .bars{display:flex;align-items:flex-end;gap:3px;height:140px;padding-top:20px}
+.bars--msd{height:auto;min-height:120px;align-items:stretch;padding-top:8px;flex-direction:column}
+.msd-wrap{display:flex;flex-direction:column;gap:10px;width:100%}
+.msd-row{display:flex;align-items:center;gap:12px}
+.msd-idx{width:22px;text-align:right;font-size:10px;color:var(--dim);flex-shrink:0}
+.msd-word{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+.msd-ch{padding:5px 8px;border-radius:4px;border:1px solid var(--border);font-size:13px;line-height:1;transition:background .1s,box-shadow .1s}
+.msd-ch--focus{box-shadow:0 0 0 2px var(--accent);border-color:var(--accent)}
 .bar{flex:1;min-width:6px;border-radius:2px 2px 0 0;position:relative;transition:height .12s ease,background-color .08s ease}
 .bval{position:absolute;top:-15px;left:50%;transform:translateX(-50%);font-size:9px;color:#3a5070;white-space:nowrap;pointer-events:none}
 .prog-track{height:2px;background:var(--bg3);margin-top:10px;border-radius:1px}
@@ -77,8 +89,9 @@ body{
 .btn:active{opacity:.8}
 .btn.play{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .btn.play:hover{opacity:.85;color:#fff}
-.spd-wrap{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:10px;color:var(--dim)}
-input[type=range]{accent-color:var(--accent);width:70px;cursor:pointer}
+.spd-wrap{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:10px;color:var(--dim);flex-shrink:0}
+#splab{display:inline-block;min-width:8ch;text-align:left;white-space:nowrap}
+input[type=range]{accent-color:var(--accent);width:70px;flex-shrink:0;cursor:pointer}
 </style>
 </head>
 <body>
@@ -93,7 +106,11 @@ input[type=range]{accent-color:var(--accent);width:70px;cursor:pointer}
    STEP FORMAT: { array: [...], hl: { idx: state }, msg: '' }
    States: default | scan | compare | swap | sorted | pivot | active | bucket
 ══════════════════════════════════════════════════════════ */
-function s(arr, hl, msg){ return { array:[...arr], hl:{...hl}, msg } }
+function s(arr, hl, msg, meta){
+  const o={ array:[...arr], hl:{...hl}, msg }
+  if(meta) Object.assign(o, meta)
+  return o
+}
 function baseHL(sortedSet){ const h={}; sortedSet.forEach(k=>{ h[k]='sorted' }); return h }
 
 // ── Selection Sort ──────────────────────────────────────
@@ -175,38 +192,52 @@ function genHeap(init){
   const a=[...init],n=a.length,S=[]
   function sink(k,sz){
     while(2*k+1<sz){
-      let c=2*k+1
-      if(c+1<sz && a[c+1]>a[c]) c++
-      if(a[k]>=a[c]) break
-      S.push(s(a,{[k]:'compare',[c]:'compare'},`Sink: ${a[k]} < child ${a[c]}, swap down`))
+      const L=2*k+1, R=2*k+2
+      let c
+      if(R<sz){
+        S.push(s(a,{[L]:'compare',[R]:'compare'},`Compare both children: [${L}]=${a[L]} vs [${R}]=${a[R]} → larger at [${a[R]>a[L]?R:L}]`,{heapSize:sz}))
+        c=a[R]>a[L]?R:L
+      } else {
+        c=L
+      }
+      const ok=a[k]>=a[c]
+      S.push(s(a,{[k]:'compare',[c]:'compare'},ok
+        ?`Parent [${k}]=${a[k]} ≥ child [${c}]=${a[c]} — heap property holds (vs larger child), stop sinking`
+        :`Parent [${k}]=${a[k]} < child [${c}]=${a[c]} — violates heap, swap downward`,{heapSize:sz}))
+      if(ok) break
+      S.push(s(a,{[k]:'swap',[c]:'swap'},`Sink: swap parent [${k}] with child [${c}]`,{heapSize:sz}))
       ;[a[k],a[c]]=[a[c],a[k]]
-      S.push(s(a,{[k]:'swap',[c]:'swap'},`Sank → ${a[c]} now at [${c}]`))
+      S.push(s(a,{[k]:'swap',[c]:'swap'},`Sank → ${a[c]} now at [${c}]`,{heapSize:sz}))
       k=c
     }
   }
-  S.push(s(a,{},'Phase 1: bottom-up heapify (sink in reverse level order)'))
-  for(let k=Math.floor(n/2)-1;k>=0;k--){
-    S.push(s(a,{[k]:'active'},`Sink node [${k}] = ${a[k]}`))
+  const firstLeaf=Math.floor(n/2), lastInternal=Math.floor(n/2)-1
+  S.push(s(a,{},`Phase 1: bottom-up heapify. Indices ${firstLeaf}…${n-1} are leaves (no children, so no sink). Heapify starts at the last internal node [${lastInternal}] — not the rightmost leaf [${n-1}] — then works left to [0].`,{heapSize:n}))
+  for(let k=lastInternal;k>=0;k--){
+    const label=k===lastInternal
+      ?`Sink from [${k}] = ${a[k]} — first call is at the rightmost internal node (parent of leaf [${n-1}], etc.), not at a leaf`
+      :`Sink node [${k}] = ${a[k]}`
+    S.push(s(a,{[k]:'active'},label,{heapSize:n}))
     sink(k,n)
   }
   const ph={}; for(let i=0;i<n;i++) ph[i]='pivot'
-  S.push(s(a,ph,`Max-heap built. Root ${a[0]} is the maximum.`))
-  S.push(s(a,{},'Phase 2: extract-max to sorted suffix'))
+  S.push(s(a,ph,`Max-heap built. Root ${a[0]} is the maximum.`,{heapSize:n}))
+  S.push(s(a,{},'Phase 2: extract-max to sorted suffix',{heapSize:n}))
   const sorted=new Set()
   for(let end=n-1;end>0;end--){
     const h=baseHL(sorted); h[0]='active'; h[end]='swap'
-    S.push(s(a,h,`Swap root ${a[0]} ↔ last heap item ${a[end]}`))
+    S.push(s(a,h,`Swap root ${a[0]} ↔ last heap item ${a[end]}`,{heapSize:end+1}))
     ;[a[0],a[end]]=[a[end],a[0]]
     sorted.add(end)
-    S.push(s(a,baseHL(sorted),`${a[end]} placed at final position [${end}]`))
+    S.push(s(a,baseHL(sorted),`${a[end]} placed at final position [${end}]`,{heapSize:end}))
     sink(0,end)
   }
   sorted.add(0)
-  S.push(s(a,baseHL(sorted),'Array sorted ✓'))
+  S.push(s(a,baseHL(sorted),'Array sorted ✓',{heapSize:0}))
   return S
 }
 
-// ── Quick Sort ──────────────────────────────────────────
+// ── Quick Sort (Hoare partition) ────────────────────────
 function genQuick(init){
   const a=[...init],n=a.length,S=[],sorted=new Set()
   function qs(lo,hi){
@@ -216,27 +247,40 @@ function genQuick(init){
     const h0=baseHL(sorted)
     for(let x=lo;x<=hi;x++) if(!sorted.has(x)) h0[x]='active'
     h0[lo]='pivot'
-    S.push(s(a,h0,`Partition [${lo}..${hi}], pivot=${piv} moved to [${lo}]`))
+    if(lo+1<hi){
+      h0[lo+1]='ptrL'; h0[hi]='ptrR'
+    } else if(lo+1===hi){
+      h0[lo+1]='ptrL'
+    }
+    S.push(s(a,h0,`Partition [${lo}..${hi}]: pivot value ${piv} at [${lo}]. L→ starts [${lo+1}], R← starts [${hi}] — L wants smaller-than-pivot, R wants larger-than-pivot; they walk toward each other.`))
     let l=lo+1,r=hi
     while(l<=r){
       while(l<=r && a[l]<piv){
-        const h=baseHL(sorted); h[lo]='pivot'; h[l]='scan'
-        S.push(s(a,h,`${a[l]} < pivot ${piv}: l moves right`))
+        const h=baseHL(sorted); h[lo]='pivot'; h[l]='ptrL'; if(l!==r) h[r]='ptrR'
+        S.push(s(a,h,`L@${l}: a[${l}]=${a[l]} < ${piv} ✓ (L loves small) → advance L right.`))
         l++
       }
+      if(l>r) break
+      const hL=baseHL(sorted); hL[lo]='pivot'; hL[l]='ptrL'; hL[r]='ptrR'
+      S.push(s(a,hL,`L@${l} stopped: a[${l}]=${a[l]} is not < pivot (≥${piv}). R@${r} at a[${r}]=${a[r]}. R walks next (loves large).`))
+
       while(l<=r && a[r]>piv){
-        const h=baseHL(sorted); h[lo]='pivot'; h[r]='scan'
-        S.push(s(a,h,`${a[r]} > pivot ${piv}: r moves left`))
+        const h=baseHL(sorted); h[lo]='pivot'; h[l]='ptrL'; h[r]='ptrR'
+        S.push(s(a,h,`R@${r}: a[${r}]=${a[r]} > ${piv} ✓ (R loves large) → advance R left.`))
         r--
       }
+      if(l>r) break
+      const hR=baseHL(sorted); hR[lo]='pivot'; hR[l]='ptrL'; hR[r]='ptrR'
+      S.push(s(a,hR,`R@${r} stopped: a[${r}]=${a[r]} is not > pivot (≤${piv}). L@${l} & R@${r} both stopped — swap what they’re on.`))
+
       if(l<r){
         const h=baseHL(sorted); h[lo]='pivot'; h[l]='swap'; h[r]='swap'
-        S.push(s(a,h,`Both pointers stopped: swap ${a[l]} ↔ ${a[r]}`))
+        S.push(s(a,h,`Swap a[${l}]=${a[l]} ↔ a[${r}]=${a[r]}; then keep walking inward.`))
         ;[a[l],a[r]]=[a[r],a[l]]; l++; r--
       } else if(l===r) l++
     }
     const h=baseHL(sorted); h[lo]='swap'; h[r]='swap'
-    S.push(s(a,h,`Pointers crossed: place pivot ${piv} at [${r}]`))
+    S.push(s(a,h,`Pointers crossed (L past R): final Hoare step — swap pivot at [${lo}] with a[${r}]=${a[r]} (R's resting index).`))
     ;[a[lo],a[r]]=[a[r],a[lo]]
     sorted.add(r)
     S.push(s(a,baseHL(sorted),`Pivot ${piv} is in final position [${r}]`))
@@ -304,6 +348,71 @@ function genLSD(init){
   return S
 }
 
+// ── MSD Radix (strings) ─────────────────────────────────
+function genMSD(init){
+  const a=[...init], S=[]
+  function keyAt(s,d){ return d<s.length?s.charCodeAt(d):0 }
+  function sortRange(lo,hi,d){
+    if(lo>=hi){
+      const h={}; h[lo]='sorted'
+      S.push(s(a,h,`Single string at [${lo}] — sorted within this subproblem.`,{msdDepth:d}))
+      return
+    }
+    let k0=keyAt(a[lo],d), allSame=true
+    for(let i=lo+1;i<=hi;i++){ if(keyAt(a[i],d)!==k0){ allSame=false; break } }
+    if(allSame){
+      if(k0===0){
+        const h={}; for(let i=lo;i<=hi;i++) h[i]='sorted'
+        S.push(s(a,h,`All strings end together here — tied on full keys; block [${lo}·${hi}] done.`,{msdDepth:d}))
+        return
+      }
+      const h={}; for(let i=lo;i<=hi;i++) h[i]='active'
+      S.push(s(a,h,`Same char '${String.fromCharCode(k0)}' at position ${d+1} for every row in [${lo}·${hi}] — recurse to next letter (still only this block).`,{msdDepth:d}))
+      sortRange(lo,hi,d+1)
+      return
+    }
+    const hA={}; for(let i=lo;i<=hi;i++) hA[i]='active'
+    const intro=d===0
+      ?`Whole array [${lo}·${hi}]: sort only by the first character. Strings sharing 'a' are grouped and handled together; don't compare them with strings starting with 'b' until this pass finishes.`
+      :`Subproblem [${lo}·${hi}]: common prefix so far — compare only position ${d+1}. Ignore every index outside this range (other prefixes are separate subproblems).`
+    S.push(s(a,hA,intro,{msdDepth:d}))
+    const R=256, cnt=new Array(R).fill(0)
+    for(let i=lo;i<=hi;i++) cnt[keyAt(a[i],d)]++
+    const start=new Array(R)
+    start[0]=0
+    for(let c=1;c<R;c++) start[c]=start[c-1]+cnt[c-1]
+    const next=[...start]
+    const buf=a.slice(lo,hi+1)
+    for(let i=0;i<buf.length;i++){
+      const k=keyAt(buf[i],d)
+      a[lo+next[k]++]=buf[i]
+    }
+    const hb={}; for(let i=lo;i<=hi;i++) hb[i]='bucket'
+    S.push(s(a,hb,`Stable buckets at char #${d+1}: ${a.slice(lo,hi+1).map((s,j)=>'['+(lo+j)+']="'+s+'"').join(' · ')}`,{msdDepth:d}))
+    let p=lo
+    while(p<=hi){
+      const k=keyAt(a[p],d)
+      let q=p
+      while(q+1<=hi && keyAt(a[q+1],d)===k) q++
+      const label=k===0?'∅ (past end)':("'"+String.fromCharCode(k)+"'")
+      if(p===q){
+        const h1={}; h1[p]='sorted'
+        S.push(s(a,h1,`Only one string with ${label} here — done.`,{msdDepth:d}))
+      } else {
+        const hr={}; for(let i=p;i<=q;i++) hr[i]='compare'
+        S.push(s(a,hr,`Bucket ${label} → indices [${p}·${q}]: recursively sort these rows by the next character only.`,{msdDepth:d}))
+        sortRange(p,q,d+1)
+      }
+      p=q+1
+    }
+  }
+  S.push(s(a,{},'MSD radix (strings): start from the leftmost character. Each recursive call is a disjoint subproblem — e.g. compare all words starting with "a" among themselves before touching "b…" words.',{}))
+  sortRange(0,a.length-1,0)
+  const hf={}; for(let i=0;i<a.length;i++) hf[i]='sorted'
+  S.push(s(a,hf,'Lexicographic order ✓',{msdDepth:null}))
+  return S
+}
+
 /* ══════════════════════════════════════════════════════════
    ALGORITHM REGISTRY
 ══════════════════════════════════════════════════════════ */
@@ -325,12 +434,12 @@ const ALGOS = {
   },
   heap:{
     name:'Heap',time:'Θ(N log N)',space:'Θ(1)',stable:false,
-    desc:'Phase 1: bottom-up heapify builds a max-heap in Θ(N) by sinking in reverse level order. Phase 2: swap root with last element, shrink heap, sink N times. Θ(1) space but poor cache performance.',
+    desc:'Bottom-up heapify starts at index ⌊N/2⌋−1 (last internal node), not at leaves: leaves have no subtrees to fix. Then Phase 2 extracts the max at the root repeatedly. Θ(1) extra space; cache-unfriendly.',
     arr:()=>[9,3,7,1,11,5,8,2,10,4,6,12],gen:genHeap
   },
   quick:{
     name:'Quicksort',time:'Θ(N log N) avg · Θ(N²) worst',space:'Θ(log N)',stable:false,
-    desc:'Hoare partitioning: two pointers walk inward, swapping elements on the wrong side of the pivot. Fastest in practice. Worst case Θ(N²) on sorted input — avoid with random pivot selection.',
+    desc:'Hoare partition: L (left pointer) wants items smaller than the pivot; R wants larger. They walk toward each other and stop on values they “don’t like”; when both are stopped, swap. Repeat until L and R cross — then swap the pivot with R’s final index. Fastest in practice; worst case Θ(N²) if pivots are poor — random pivots help.',
     arr:()=>[9,3,7,1,11,5,8,2,10,4,6,12],gen:genQuick
   },
   counting:{
@@ -342,18 +451,27 @@ const ALGOS = {
     name:'LSD Radix',time:'Θ(WN + WR)',space:'Θ(N + R)',stable:true,
     desc:'Sort digit-by-digit from least to most significant using a stable counting sort on each pass. W passes × Θ(N+R) per pass. Stability is essential: each pass must preserve the prior digit order.',
     arr:()=>[53,17,84,32,61,45,28,76,12,95,39,50],gen:genLSD
+  },
+  msd:{
+    name:'MSD Radix',time:'Θ(N · L)',space:'Θ(N + R)',stable:true,
+    desc:'Most-significant-character first: partition into buckets by the current column, recurse within each bucket. Each subproblem is independent — sort every "a…" word against other "a…" words before comparing across "b…". Sweeps the opposite direction from LSD (top-down instead of bottom-up by digit).',
+    arr:()=>['axis','barn','ably','acid','bark','able'],gen:genMSD
   }
 }
 
 const COLORS = {
   default:'#1a3050',scan:'#1e5080',compare:'#b06820',swap:'#b02828',
-  sorted:'#1a8040',pivot:'#6030b8',active:'#1858b0',bucket:'#a07818'
+  sorted:'#1a8040',pivot:'#6030b8',active:'#1858b0',bucket:'#a07818',
+  ptrL:'#1a9e7a',ptrR:'#d4943c'
 }
 const LEGEND = [
   {state:'default',label:'Default'},{state:'active',label:'Region'},
   {state:'compare',label:'Comparing'},{state:'swap',label:'Swapping'},
   {state:'sorted',label:'Sorted'},{state:'pivot',label:'Pivot/Heap'},
   {state:'bucket',label:'Bucket/Digit'}
+]
+const LEGEND_QUICK = [
+  {state:'ptrL',label:'L pointer (small side)'},{state:'ptrR',label:'R pointer (large side)'}
 ]
 
 /* ══════════════════════════════════════════════════════════
@@ -366,6 +484,74 @@ const SLABELS=['slowest','slow','','medium','','fast','','','fastest']
 /* ══════════════════════════════════════════════════════════
    RENDER
 ══════════════════════════════════════════════════════════ */
+function treeWidth(i, heapSize, nodeW, gap){
+  if(i>=heapSize) return 0
+  const L=treeWidth(2*i+1,heapSize,nodeW,gap)
+  const R=treeWidth(2*i+2,heapSize,nodeW,gap)
+  return Math.max(nodeW, L+gap+R)
+}
+function escHtml(t){
+  return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+}
+function renderMsdStrings(arr, hl, depth){
+  const d=depth===undefined||depth===null?-1:depth
+  return `<div class="msd-wrap">${arr.map((str,i)=>{
+    const rowBg=COLORS[hl[i]||'default']||COLORS.default
+    const chars=[...str].map((ch,j)=>{
+      const isFocus=d>=0&&j===d
+      const bg=isFocus?COLORS.compare:rowBg
+      const cl=isFocus?' msd-ch--focus':''
+      return `<span class="msd-ch${cl}" style="background:${bg}">${escHtml(ch)}</span>`
+    }).join('')
+    return `<div class="msd-row"><span class="msd-idx">${i}</span><div class="msd-word">${chars}</div></div>`
+  }).join('')}</div>`
+}
+
+function renderHeapSvg(arr, hl, heapSize){
+  if(heapSize<=0){
+    return '<div class="heap-empty">Heap empty — all elements extracted.</div>'
+  }
+  const nodeW=34, nodeH=26, rowH=46, gap=16, pad=12
+  const W=Math.max(160, treeWidth(0, heapSize, nodeW, gap)+pad*2)
+  let maxD=0
+  for(let i=0;i<heapSize;i++) maxD=Math.max(maxD, Math.floor(Math.log2(i+1)))
+  const H=pad*2+(maxD+1)*rowH+nodeH
+  const pos={}
+  function place(i, x0, x1, depth){
+    if(i>=heapSize) return
+    const xm=(x0+x1)/2
+    pos[i]={x:xm,y:pad+depth*rowH}
+    place(2*i+1, x0, xm, depth+1)
+    place(2*i+2, xm, x1, depth+1)
+  }
+  place(0, 0, W, 0)
+  let svg=`<svg viewBox="0 0 ${W} ${H}" class="heap-svg" xmlns="http://www.w3.org/2000/svg" aria-label="Binary heap">`
+  const stroke='#273040'
+  for(let i=0;i<heapSize;i++){
+    const c1=2*i+1,c2=2*i+2
+    const {x,y}=pos[i]
+    if(c1<heapSize){
+      const p=pos[c1]
+      svg+=`<line x1="${x}" y1="${y+nodeH}" x2="${p.x}" y2="${p.y}" stroke="${stroke}" stroke-width="1.25" opacity="0.65"/>`
+    }
+    if(c2<heapSize){
+      const p=pos[c2]
+      svg+=`<line x1="${x}" y1="${y+nodeH}" x2="${p.x}" y2="${p.y}" stroke="${stroke}" stroke-width="1.25" opacity="0.65"/>`
+    }
+  }
+  for(let i=0;i<heapSize;i++){
+    const v=arr[i]
+    const col=COLORS[hl[i]||'default']||COLORS.default
+    const {x,y}=pos[i]
+    const rx=x-nodeW/2
+    svg+=`<rect x="${rx}" y="${y}" width="${nodeW}" height="${nodeH}" rx="4" fill="${col}" stroke="${stroke}" stroke-width="1"/>`
+    svg+=`<text x="${x}" y="${y+17}" text-anchor="middle" fill="#e0eeff" font-size="11" font-family="JetBrains Mono,Consolas,monospace">${v}</text>`
+    svg+=`<text x="${x}" y="${y-4}" text-anchor="middle" fill="#5e7a96" font-size="8" font-family="JetBrains Mono,Consolas,monospace">[${i}]</text>`
+  }
+  svg+='</svg>'
+  return `<div class="heap-wrap">${svg}<div class="heap-caption">Max-heap as binary tree · heap fills indices <span style="color:var(--bright)">0–${heapSize-1}</span> · parent ⌊(i-1)/2⌋, children 2i+1 and 2i+2</div></div>`
+}
+
 function init(){
   const tabsEl=document.getElementById('tabs')
   tabsEl.innerHTML=Object.keys(ALGOS).map(k=>
@@ -376,6 +562,7 @@ function init(){
 
 function buildContent(){
   const al=ALGOS[curKey]
+  const legendRows=curKey==='quick'?[...LEGEND,...LEGEND_QUICK]:LEGEND
   document.getElementById('main').innerHTML=`
     <div class="badges">
       <span class="badge badge-t">⏱ ${al.time}</span>
@@ -384,13 +571,14 @@ function buildContent(){
     </div>
     <div class="desc">${al.desc}</div>
     <div class="viz">
-      <div class="bars" id="bars"></div>
+      ${curKey==='heap'?'<div class="heap-viz" id="heapViz"></div>':''}
+      <div class="bars${curKey==='msd'?' bars--msd':''}" id="bars"></div>
       <div class="prog-track"><div class="prog-bar" id="prog" style="width:0"></div></div>
       <div class="step-info">
         <div class="step-msg" id="msg">Press Play or Step →</div>
         <div class="step-num" id="num"></div>
       </div>
-      <div class="legend">${LEGEND.map(l=>`
+      <div class="legend">${legendRows.map(l=>`
         <div class="lgnd-item">
           <div class="lgnd-dot" style="background:${COLORS[l.state]}"></div>
           <span>${l.label}</span>
@@ -427,14 +615,26 @@ function renderStep(){
   if(!bEl) return
   const st=steps[Math.min(idx,steps.length-1)]
   const {array,hl,msg}=st
-  const maxV=Math.max(...array)
-  bEl.innerHTML=array.map((v,i)=>{
-    const col=COLORS[hl[i]||'default']||COLORS.default
-    const pct=(v/maxV)*100
-    return `<div class="bar" style="height:${pct}%;background:${col}">
-      ${array.length<=14?`<div class="bval">${v}</div>`:''}
-    </div>`
-  }).join('')
+  const heapViz=document.getElementById('heapViz')
+  if(heapViz){
+    const hs=st.heapSize!==undefined?st.heapSize:array.length
+    heapViz.innerHTML=curKey==='heap'?renderHeapSvg(array, hl, hs):''
+  }
+  if(curKey==='msd'){
+    bEl.className='bars bars--msd'
+    const dep=st.msdDepth
+    bEl.innerHTML=renderMsdStrings(array, hl, dep)
+  } else {
+    bEl.className='bars'
+    const maxV=Math.max(...array)
+    bEl.innerHTML=array.map((v,i)=>{
+      const col=COLORS[hl[i]||'default']||COLORS.default
+      const pct=(v/maxV)*100
+      return `<div class="bar" style="height:${pct}%;background:${col}">
+        ${array.length<=14?`<div class="bval">${v}</div>`:''}
+      </div>`
+    }).join('')
+  }
   if(mEl) mEl.textContent=msg
   if(nEl) nEl.textContent=`${Math.min(idx+1,steps.length)} / ${steps.length}`
   if(pEl) pEl.style.width=`${((idx+1)/steps.length)*100}%`
